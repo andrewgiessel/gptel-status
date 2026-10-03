@@ -25,7 +25,7 @@ If you define your own Doom layouts, include `gptel-status` in their segment lis
 | Icon | Status |
 | --- | --- |
 | ◷ Clock | Waiting for the model |
-| ⟳ Sync arrows | Receiving/streaming a response, not refreshing |
+| ⟳ Sync arrows | Responding; may precede visible text, not refreshing |
 | ⚒ Tools | Preparing/running tools or receiving tool results |
 | ? Question | Awaiting tool confirmation |
 | ✓ Check | Ready/completed |

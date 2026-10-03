@@ -72,6 +72,16 @@
            (lambda (_) '((:label "z" :depth 2) (:label "b" :depth 1) (:label "a" :depth 1)))))
       (should (equal (mapcar (lambda (c) (plist-get c :label))
                             (plist-get (gptel-status-snapshot) :children)) '("a" "b" "z"))))
+    (let ((gptel-status-child-provider
+           (lambda (_)
+             '((:id 4 :parent-id 2 :label "grandchild" :depth 2 :order 3)
+               (:id 3 :parent-id 1 :label "second child" :depth 1 :order 2)
+               (:id 2 :parent-id 1 :label "first child" :depth 1 :order 1)
+               (:id 1 :label "parent" :depth 0 :order 0)
+               (:id 5 :label "sibling root" :depth 0 :order 4)))))
+      (should (equal (mapcar (lambda (c) (plist-get c :label))
+                            (plist-get (gptel-status-snapshot) :children))
+                     '("parent" "first child" "grandchild" "second child" "sibling root"))))
     (let ((gptel-status-child-provider (lambda (_) (error "provider failed"))))
       (should-not (plist-get (gptel-status-snapshot) :children)))))
 

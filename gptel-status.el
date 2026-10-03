@@ -27,7 +27,7 @@
 (defface gptel-status-waiting-face '((t :inherit warning))
   "Face for a request waiting on the network." :group 'gptel-status)
 (defface gptel-status-responding-face '((t :inherit font-lock-keyword-face))
-  "Face for a request receiving a response." :group 'gptel-status)
+  "Face for the response phase, which may precede visible text." :group 'gptel-status)
 (defface gptel-status-tool-face '((t :inherit font-lock-function-name-face))
   "Face for tool execution." :group 'gptel-status)
 (defface gptel-status-question-face '((t :inherit warning))
@@ -44,8 +44,9 @@
 (defcustom gptel-status-child-provider nil
   "Function returning child status plists for the current conversation buffer.
 Each plist should contain :label, :state, :depth, and optionally :elapsed.
-The adapter owns chat isolation and ancestry aggregation; this package never
-inspects adapter-specific child registries."
+Providers may also include stable :id, :parent-id, and :order fields to request
+stable depth-first ordering.  The adapter owns chat isolation and ancestry
+aggregation; this package never inspects adapter-specific child registries."
   :type '(choice (const nil) function))
 (defconst gptel-status-child-slot-count 2
   "Number of child status slots shown beside the parent indicator.")
@@ -79,7 +80,7 @@ back to their chat buffer.")
   "Unicode fallback, narrow fallback, face, and optional Nerd Icon per state.")
 
 (defun gptel-status--state-label (state)
-  (or (cdr (assq state '((WAIT . "waiting") (TYPE . "receiving")
+  (or (cdr (assq state '((WAIT . "waiting") (TYPE . "responding")
                          (TPRE . "preparing tool") (TOOL . "executing tool")
                          (TRET . "receiving tool result"))))
       (if (symbolp state) (downcase (symbol-name state)) "unknown")))
@@ -133,24 +134,68 @@ back to their chat buffer.")
           ((null state) 'waiting)
           (t 'info))))
 
+(defun gptel-status--child-siblings-less-p (a b)
+  "Return non-nil when child A should precede sibling B."
+  (let ((oa (plist-get a :order))
+        (ob (plist-get b :order))
+        (ia (plist-get a :id))
+        (ib (plist-get b :id)))
+    (cond ((and (numberp oa) (numberp ob) (/= oa ob)) (< oa ob))
+          ((and ia ib (not (equal ia ib)))
+           (string-lessp (format "%s" ia) (format "%s" ib)))
+          (t (string-lessp (format "%s" (plist-get a :label))
+                           (format "%s" (plist-get b :label)))))))
+
+(defun gptel-status--order-children (children)
+  "Order CHILDREN depth-first when stable :id/:parent-id fields are present.
+Otherwise preserve the historical depth-then-label ordering."
+  (let ((ids (delq nil (mapcar (lambda (child) (plist-get child :id)) children))))
+    (if (null ids)
+        (sort (copy-sequence children)
+              (lambda (a b)
+                (let ((da (or (plist-get a :depth) 0))
+                      (db (or (plist-get b :depth) 0)))
+                  (if (= da db)
+                      (gptel-status--child-siblings-less-p a b)
+                    (< da db)))))
+      (let (ordered visited)
+        (cl-labels ((visit (child)
+                      (let ((id (plist-get child :id)))
+                        (unless (memq child visited)
+                          (push child visited)
+                          (push child ordered)
+                          (dolist (descendant
+                                   (sort
+                                    (seq-filter
+                                     (lambda (candidate)
+                                       (equal (plist-get candidate :parent-id) id))
+                                     children)
+                                    #'gptel-status--child-siblings-less-p))
+                            (visit descendant))))))
+          (dolist (root (sort
+                         (seq-filter
+                          (lambda (child)
+                            (not (member (plist-get child :parent-id) ids)))
+                          children)
+                         #'gptel-status--child-siblings-less-p))
+            (visit root))
+          ;; Malformed/cyclic ancestry must not make child statuses disappear.
+          (dolist (child (sort (copy-sequence children)
+                               #'gptel-status--child-siblings-less-p))
+            (visit child)))
+        (nreverse ordered)))))
+
 (defun gptel-status-snapshot (&optional buffer)
   "Return a normalized status snapshot for BUFFER (defaults to current buffer).
 The returned plist has :state, :label, :children, and :child-count.  Children
-come from `gptel-status-child-provider' and are sorted by depth then label."
+with identity metadata are ordered depth-first; other providers use depth/label."
   (with-current-buffer (or buffer (current-buffer))
     (let* ((parent (gptel-status--parent-state))
            (children (and (functionp gptel-status-child-provider)
                           (condition-case nil
                               (funcall gptel-status-child-provider (current-buffer))
                             (error nil))))
-           (children (sort (copy-sequence children)
-                           (lambda (a b)
-                             (let ((da (or (plist-get a :depth) 0))
-                                   (db (or (plist-get b :depth) 0)))
-                               (if (= da db)
-                                   (string-lessp (format "%s" (plist-get a :label))
-                                                 (format "%s" (plist-get b :label)))
-                                 (< da db)))))))
+           (children (gptel-status--order-children children)))
       (list :state (car parent) :label (cadr parent)
             :children children :child-count (length children)))))
 
